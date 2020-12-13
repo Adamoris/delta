@@ -1,0 +1,671 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>JavaScript</title>
+  <script src="http://cdnjs.cloudflare.com/ajax/libs/processing.js/1.4.8/processing.min.js"></script>
+</head>
+<body>
+  <canvas id="canvas"></canvas>
+  <script>
+    var canvas = document.getElementById("canvas");
+    var processing = new Processing(canvas, function(processing) {
+        processing.size(400, 400);
+        processing.background(0xFFF);
+
+        var mouseIsPressed = false;
+        processing.mousePressed = function () { mouseIsPressed = true; };
+        processing.mouseReleased = function () { mouseIsPressed = false; };
+
+        var keyIsPressed = false;
+        processing.keyPressed = function () { keyIsPressed = true; };
+        processing.keyReleased = function () { keyIsPressed = false; };
+
+        function getImage(s) {
+            var url = "https://www.kasandbox.org/programming-images/" + s + ".png";
+            processing.externals.sketch.imageCache.add(url);
+            return processing.loadImage(url);
+        }
+
+        // use degrees rather than radians in rotate function
+        var rotateFn = processing.rotate;
+        processing.rotate = function (angle) {
+            rotateFn(processing.radians(angle));
+        };
+
+        with (processing) {
+
+            /*
+                Andrew Park
+                Rishabh Viswanathan
+                Portal Game
+                Note: recent edits only to add comments to clarify information
+            */
+
+            //Controls+definitions///////////////////////////////////Andrew
+            //If you want to use wasd controls, make the value below 1, otherwise use 0 for arrow keys.
+            var keyBind = 1;
+            var key1;
+            var key2;
+            var key3;
+            if (keyBind === 0){
+                key1 = RIGHT;
+                key2 = LEFT;
+                key3 = UP;
+            } else if (keyBind === 1){
+                key1 = 68;
+                key2 = 65;
+                key3 = 87;
+            }
+            var gameStart = 0;
+            // transition screen
+            var transparency=255;
+            var screenOverlay=[255,255,255];
+            // rect collision
+            var collide = function(obj1,obj2){
+                return obj1.x < obj2.x + obj2.w && obj1.x + obj1.w > obj2.x && obj1.y < obj2.y + obj2.h && obj1.y + obj1.h > obj2.y;
+            };
+            // reach the end
+            var reachEnd=function(obj1,obj2){
+                // obj1 = exit
+                return obj2.x + obj2.w > obj1.x - obj1.w/2 && obj2.x < obj1.x + obj1.w/2 && obj2.y + obj2.h > obj1.y - obj1.h/2 && obj2.y<obj1.y + obj1.h/2;
+            };
+            ////////////////////////////////////////////////////////////////////////
+
+            //Camera Scroll///////////////////////////////////////////////Andrew
+            var Scroll = function(x, y, w, h, viewX, viewY, levelWidth, levelHeight, speed){
+                // Viewport on canvas
+                this.x = x;
+                this.y = y;
+                this.w  = w;
+                this.h = h;
+                this.speed = 5; // lower value = higher speed
+            };
+            Scroll.prototype.follow = function(frame) {
+                var x = -frame.x + this.x + (this.w/2) - (frame.w/2);
+                var y = -frame.y + this.y + (this.h/2) - (frame.h/2);
+                var a = atan2(y-this.viewY, x-this.viewX);
+                var v = dist(x, y, this.viewX, this.viewY) / this.speed;
+                this.viewX += v*cos(a);
+                this.viewY += v*sin(a);
+                var width  = this.x + this.w  - this.levelWidth;
+                var height = this.y + this.h - this.levelHeight;
+                if(gameStart !== 1){
+                    this.viewX = min(this.viewX, this.x);
+                    this.viewY = min(this.viewY, this.y);
+                }
+                gameStart = 1;
+            };
+            Scroll.prototype.view = function(frame) {
+                var viewX = -this.viewX + this.x, viewY = -this.viewY + this.y, viewW = frame.w - this.w, viewH = frame.w - this.h;
+                if(frame.x >  viewX - frame.w && frame.x <  viewX - viewW + frame.w && frame.y >  viewY - frame.h && frame.y <  viewY - viewH + frame.h){
+                    var frameView = {x: (this.viewX + frame.x), y: (this.viewY + frame.y), w: frame.w, h: frame.h, frame: this};
+                    return frameView;
+                }
+            };
+            ///////////////////////////////////////////////////////////////////
+            // key trigger events
+            var keys=[];
+            keyPressed=function(){
+                keys[keyCode]=true;
+            };
+            keyReleased=function(){
+                keys[keyCode]=false;
+            };
+            //Physics engine//////////////////////////////////////////////Andrew
+                var Player=function(x,y,w,h,keyInputs){
+                    this.velx=0; // Movement parameters
+                    this.vely=0;
+                    this.accel=0.25;
+                    this.maxSpeed=5;
+                    this.jumping=false; // Jumping parameters
+                    this.jumpHeight=8;
+                    this.gravity=0.5;
+                    this.x=x; // position + dimensions
+                    this.y=y;
+                    this.w=w;
+                    this.h=h;
+                    this.keyInputs=keyInputs;
+                    this.dead=false; // Miscellaneous
+                    this.deathPause=0;
+                    this.legAngles=[0,0];
+                    this.jumpTimer=0;
+                };
+            Player.prototype.update=function(blocks){
+                if(!this.dead){
+                    // update player's position when NOT dead
+                    if(keys[this.keyInputs[0]]){
+                        this.velx+=this.accel; 
+                        this.legAngles[0]=sin(frameCount*15)*this.w; 
+                        this.legAngles[1]=-sin(frameCount*15)*this.w;
+                    }else if(keys[this.keyInputs[1]]){
+                        this.velx-=this.accel; 
+                        this.legAngles[0]=-sin(frameCount*15)*this.w; 
+                        this.legAngles[1]=sin(frameCount*15)*this.w;
+                    }else{
+                        this.legAngles[0]=0; 
+                        this.legAngles[1]=0;
+                    }if(keys[this.keyInputs[2]]&&!this.jumping){
+                        this.vely=-this.jumpHeight; this.jumping=true;
+                    }
+                    if(!keys[this.keyInputs[0]]&&!keys[this.keyInputs[1]]){
+                        if(this.velx>0&&this.velx!==0){
+                            this.velx-=this.accel;
+                        }
+                        if(this.velx<0){
+                            this.velx+=this.accel;
+                        }
+                    }
+                    // speed limit
+                    if(Math.abs(this.velx)>this.maxSpeed){
+                        if(this.velx>0){
+                            this.velx=this.maxSpeed;
+                        }
+                        if(this.velx<0){
+                            this.velx=-this.maxSpeed;
+                        }
+                    }
+                    this.x+=this.velx;
+                    this.applyCollision(blocks,this.velx,0); // apply speed and collisions
+                    this.jumping=true;
+                    this.y+=this.vely;
+                    this.applyCollision(blocks,0,this.vely);
+                    this.vely+=this.gravity;
+            }
+                if(this.jumping){
+                    this.jumpTimer=0;
+                }
+                if(this.health<=0){
+                    this.dead=true;
+                }
+            };
+            Player.prototype.applyCollision=function(obj,velx,vely){
+                for(var i=0; i<obj.length; i++){
+                    if(collide(this,obj[i])){
+                        if(velx<0){
+                            this.velx=0;
+                            this.x=obj[i].x+obj[i].w;
+                        }
+                        if(velx>0){
+                            this.velx=0;
+                            this.x=obj[i].x-this.w;
+                        }
+                        if(vely>0){
+                            this.jumpTimer++;
+                            this.vely=0;
+                            this.jumping=false;
+                            this.y=obj[i].y-this.h;
+                        }
+                        if(vely<0){
+                            this.vely=0;
+                            this.jumping=true;
+                            this.y=obj[i].y+obj[i].h;
+                        }
+                    }
+                }
+            };
+            ////////////////////////////////////////////////////////////////////
+
+            //Playermodel//////////////////////////////////////////////////Andrew
+            Player.prototype.draw = function(frame) {
+                var view=frame.view(this);
+                stroke(209, 209, 209);
+                if(view&&!this.dead){
+                    // body color
+                    fill(69, 69, 69);
+                    // right leg
+                    pushMatrix();
+                    translate(view.x+view.w/1.9,view.y+view.h/2);
+                    rotate(this.legAngles[0]);
+                    rect(0,0,view.w/3,view.h/2);
+                    popMatrix();
+                    // left leg
+                    pushMatrix();
+                    translate(view.x+view.w/3.2,view.y+view.h/2);
+                    rotate(this.legAngles[1]);
+                    rect(-view.w/5,0,view.w/3,view.h/2);
+                    popMatrix();
+                    // head
+                    ellipse(view.x+view.w/2,view.y+view.h/6,view.w,view.h/3);
+                    // torso
+                    ellipse(view.x+view.w/1.9,view.y+view.h/2,view.w,view.h/3);
+                    rect(view.x,view.y+view.h/2,view.w,view.h/3.5);
+                    noStroke();
+                    rect(view.x+1,view.y+view.h/2,view.w/1.1,view.h/7.0);
+                }
+            };
+            /////////////////////////////////////////////////////////////////////////
+
+            //Objects///////////////////////////////////////////////Rishabh
+            var Block=function(x,y,w,h,type){
+                this.x=x; // block's position and dimensions
+                this.y=y;
+                this.w=w;
+                this.h=h;
+                this.type=type; // block's type
+            };
+            Block.prototype.draw= function(frame) {
+                noStroke();
+                var view=frame.view(this);
+                if(view){ // if visible
+                    // draw the block
+                    switch(this.type){
+                        case "wall":
+                            fill(242, 242, 242);
+                            rect(view.x,view.y,view.w,view.h);
+                            break;
+                        case "platform":
+                            fill(235, 235, 235);
+                            rect(view.x,view.y,view.w,view.h);
+                            fill(227, 227, 227);
+                            rect(view.x,view.y,view.w,view.h/2);
+                            break;
+                    }
+                }
+            };
+            var Spike=function(x,y,w,h){
+                this.x=x; // spike's position and dimensions
+                this.y=y;
+                this.w=w;
+                this.h=h;
+                this.point=0;
+            };
+            Spike.prototype.update=function(players){
+                for(var i=0; i<players.length; i++){
+                    if(collide(this,players[i])&&!players[i].dead){ // if player lands on spike
+                        screenOverlay=[255,255,255];
+                        transparency=100;
+                        players[i].dead=true;
+                    }
+                }
+            };
+            Spike.prototype.draw= function(frame) {
+                var view=frame.view(this);
+                if(view){
+                    fill(163, 163, 163);
+                    triangle(view.x,view.y+view.h,view.x+view.w,view.y+view.h,view.x+view.w/2,view.y-this.point);
+                    this.point=cos(frameCount)*view.h/12;
+                }
+            };
+            ///////////////////////////////////////////////////////////////
+
+            //Exit//////////////////////////////////////////////////Rishabh
+            var Portal=function(x,y,w,h){
+                this.x=x; // portal's position and dimensions
+                this.y=y;
+                this.w=w;
+                this.h=h;
+                this.lerp={
+                    from:color(255, 255, 255,0),
+                    to:color(110, 110, 110)
+                };
+                this.complete=false; // transition complete?
+            };
+            Portal.prototype.update=function(players) {
+                screenOverlay=[0,0,0]; // transition
+                for(var i=0; i<players.length; i++) {
+                    if(reachEnd(this,players[i])&&!this.complete){
+                        transparency+=10;
+                    }
+                    else if(transparency>0&&!this.complete&&!collide(this,players[i])){
+                        transparency-=10;
+                    }
+                }
+                if(transparency>255){
+                    this.complete=true;
+                }
+            };
+            Portal.prototype.draw= function(frame) {
+                var view=frame.view(this);
+                noStroke();
+                if(view){
+                    for(var i=0; i<(this.w+this.h)/2; i++){
+                        var color=lerpColor(this.lerp.from,this.lerp.to,i/this.w);
+                        fill(color);
+                        ellipse(view.x,view.y,-i+view.w,-i+view.h);
+                    }
+                    fill(51, 51, 51);
+                    ellipse(view.x,view.y,view.w/2,view.h/2);
+                }
+            };
+            ////////////////////////////////////////////////////////////////////////
+
+            //Level Designer Engine////////////////////////////////////////////////Rishabh
+                // store player in level array
+                var players=[];
+                players.add=function(x,y,w,h,keyInputs,color){
+                    this.push(new Player(x,y,w,h,keyInputs,color));
+                };
+                players.apply=function(frame,blocks,fallBlocks){
+                    for(var i=0; i<this.length; i++){
+                        this[i].update(blocks);
+                        this[i].draw(frame);
+                    }
+                };
+                // store "Block"s in an array
+                var blocks=[];
+                blocks.add=function(x,y,w,h,color){
+                    this.push(new Block(x,y,w,h,color));
+                };
+                blocks.apply=function(scrolling){
+                    for(var i=0; i<this.length; i++){
+                        this[i].draw(scrolling);
+                    }
+                };
+                // store exit in array
+                var portals=[];
+                portals.add=function(x,y,w,h){
+                    this.push(new Portal(x,y,w,h));
+                };
+                portals.apply=function(scrolling,players){
+                    for(var i=0; i<this.length; i++){
+                        this[i].update(players);
+                        this[i].draw(scrolling);
+                    }
+                };
+                // store "Spike"s in an array
+                var spikes=[];
+                spikes.add=function(x,y,w,h){
+                    this.push(new Spike(x,y,w,h));
+                };
+                spikes.apply=function(scrolling,players){
+                    for(var i=0; i<this.length; i++){
+                        this[i].update(players);
+                        this[i].draw(scrolling);
+                    }
+                };
+            // manage objects
+            var objects=[players,blocks,portals,spikes];
+            // remove objects
+            objects.remove=function(){
+                for(var i=0; i<objects.length; i++){
+                    for(var j=0; j<objects[i].length; j++){
+                        objects[i].splice(j,objects[i].length);
+                    }
+                }
+            };
+            ///////////////////////////////////////////////////////////////////
+
+            //Level Designer///////////////////////////////////Programmed in collaboration by Andrew and Rishabh
+                var Game=function(){ //game manager
+                    // game levels
+                    this.levels=[
+                        [
+                            "1                                                  ",
+                            "===================================================",
+                            "wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww",
+                            "wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww",
+                            "wwwwwww                                            ",
+                            "wwwwwww                                            ",
+                            "wwwwwww                                            ",
+                            "wwwwwww                                            ",
+                            "wwwwwww                                            ",
+                            "wwwwwww                                            ",
+                            "wwwwwww P                                          ",
+                            "wwwwwww                 ==   ==                  O ",
+                            "wwwwwww=================ww^^^ww====================",
+                            "wwwwwwwwwwwwwwwwwwwwwwwwww===wwwwwwwwwwwwwwwwwwwwww",
+                            "wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww",
+                            "wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww",
+                            "wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww",
+                            "wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww",
+                            "wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww",
+                        ],
+                        [
+                            "2                         ",
+                            "                          ",
+                            " P                    O   ",
+                            "===                =====  ",
+                            "     ===       ===        ",
+                            "            ==            ",
+                            "^^^^^^^^^^^^^^^^^^^^^^^^^^",
+                            "wwwwwwwwwwwwwwwwwwwwwwwwww",
+                            "wwwwwwwwwwwwwwwwwwwwwwwwww",
+                            "wwwwwwwwwwwwwwwwwwwwwwwwww",
+                            "wwwwwwwwwwwwwwwwwwwwwwwwww",
+                            "wwwwwwwwwwwwwwwwwwwwwwwwww"
+                        ],
+                        [
+                            "3                          ",
+                            "                           ",
+                            " P         ====           O",
+                            "===  == == wwww www  === ==",
+                            "www  ww ww wwww www  www ww",
+                            "www  ww ww wwww www  www ww",
+                            "www  ww ww wwww www  www ww",
+                            "www  ww ww wwww www  www ww",
+                            "www  ww ww wwww www  www ww",
+                            "www  ww ww wwww www  www ww"
+                        ],
+                        [
+                            "4                                 ",
+                            "                                  ",
+                            " P                             O  ",
+                            "====  === =           ===     === ",
+                            "wwww  www w ===  ==== www  == www ",
+                            "wwww^^www^w^www^^wwww^www^^ww^www^",
+                            "wwww==www=w=www==wwww=www==ww=www=",
+                            "wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww",
+                            "wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww",
+                            "wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww",
+                            "wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww",
+                            "wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww"
+                        ],
+                        [
+                            "5                                      ",
+                            "                                       ",
+                            "                                       ",
+                            " P                                      ",
+                            "===                                    ",
+                            "www  ==    =       ==          ==    O ",
+                            "www  ww =  w  ==   ww   =  =   ww   ===",
+                            "www^^ww^w^^w^^ww^^^ww^^^w^^w^^^ww^^^www",
+                            "www==ww=w==w==ww===ww===w==w===ww===www",
+                            "wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww",
+                            "wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww",
+                            "wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww",
+                            "wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww"
+                        ],
+                        [
+                            "6                                          ",
+                            "                                           ",
+                            "                                           ",
+                            "            ==           ===               ",
+                            " P      ==          ==          =   =      ",
+                            "====            =                     =    ",
+                            "                                           ",
+                            "                                           ",
+                            "                                           ",
+                            "                                         O ",
+                            "                                        ==="
+                        ],
+                        [
+                            "7                      ",
+                            "                     O ",
+                            " P          ==      ===",
+                            "====    =   ww  ==  www",
+                            "wwww^^^^w^^^ww^^ww^^www",
+                            "wwww====w===ww==ww==www",
+                            "wwwwwwwwwwwwwwwwwwwwwww",
+                            "wwwwwwwwwwwwwwwwwwwwwww",
+                            "wwwwwwwwwwwwwwwwwwwwwww",
+                            "wwwwwwwwwwwwwwwwwwwwwww"
+                        ],
+                        [
+                            "8                                  ",
+                            "                                   ",
+                            "                ==                 ",
+                            " P ===  ==  =   ww     ===  =^^^ O ",
+                            "== www  ww  w   ww     www  w======",
+                            "ww^www^^ww^^w^^^ww^^^^^www^^wwwwwww",
+                            "ww=www==ww==w===ww=====www==wwwwwww",
+                            "wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww",
+                            "wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww",
+                            "wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww",
+                            "wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww"
+                        ],
+                        [
+                            "9                                                   O",
+                            "                                                  ===",
+                            "                                         ==    =     ",
+                            "                                                     ",
+                            " P   ==                               ==             ",
+                            "   ==ww   ===                                        ",
+                            "===wwww   www=               ===^==                  ",
+                            "wwwwwww   wwww==     ==  =     w=w                   ",
+                            "wwwwwww   wwwwww==                                   ",
+                            "wwwwwww   wwwwwwww^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^",
+                            "wwwwwww   wwwwwwww==================================="
+                        ],
+                        [
+                            " P                         10",
+                            "                             ",
+                            "===     ==               O   ",
+                            "                       ====  ",
+                            "     ==         ====         ",
+                            "           ===               ",
+                            "                             ",
+                            "                             ",
+                            "^^^^^^^^^^^^^^^^^^^^^^^^^^^^^",
+                            "=============================",
+                            "wwwwwwwwwwwwwwwwwwwwwwwwwwwww"
+                        ],
+                        [
+                            "11                         ",
+                            "                     =     ",
+                            "                 =   w     ",
+                            "P            =   w   w     ",
+                            "   =     =   w   w   w     ",
+                            "=  w     w   w   w   w  ^ ^",
+                            "w  w  =  w   w   w   w  = =",
+                            "w  w  w  w   w   w   w  wOw",
+                            "w  w  w  w   w   w   w  w=w",
+                            "w  w  w  w   w   w   w  www",
+                            "w  w  w  w   w   w   w  www",
+                            "w  w  w  w   w   w   w  www"
+                        ],
+                        [
+                            "12                                                                 ",
+                            "                                                                   ",
+                            " P                                                          w      ",
+                            "                                                    =   =   w      ",
+                            "=========                                 =     =   w   w   w      ",
+                            "wwwwwwwww                              =  w     w   w   w   w  ^   ",
+                            "wwwwwwwww                        ==    w  w  =  w   w   w   w  =   ",
+                            "wwwwwwwww ==                   ==ww    w  w  w  w   w   w   w  w   ",
+                            "wwwwwwwww                ==== =wwww    w  w  w  w   w   w   w  w   ",
+                            "wwwwwwwww     ==      =       wwwww    w  w  w  w   w   w   w  w   ",
+                            "wwwwwwwww                     wwwww    w  w  w  w   w   w   w  w   ",
+                            "wwwwwwwww          =          wwwww    w  w  w  w   w   w   w  w   ",
+                            "wwwwwwwww                     wwwww    w  w  w  w   w   w   w  w   ",
+                            "wwwwwwwww^^^^^^^^^^^^^^^^^^^^^wwwww^^^^w  w  w  w   w   w   w  w   ",
+                            "wwwwwwwww=====================wwwww====w  w  w  w   w   w   w  w   ",
+                            "wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww  w  w  w   w   w   w  w   ",
+                            "wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww  w  w  w   w   w   w  w   ",
+                            "wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww  w  w  w   w   w   w  w   ",
+                            "wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww  w  w  w   w   w   w  w   ",
+                            "wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww  w  w  w   w   w   w  w   ",
+                            "wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww  w  w  w   w   w   w  w   ",
+                            "wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww  w  w  w   w   w   w  w   ",
+                            "wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww  w  w  w   w   w   w  w   ",
+                            "wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww  w  w  w   w   w   w  w^ O",
+                            "wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww  w  w  w   w   w   w  w==="
+                            
+                        ],
+                        [
+                            "end            ",
+                            "               ",
+                            "               ",
+                            "               ",
+                            "               ",
+                            " === =  = ==   ",
+                            " =   == = = =  ",
+                            " ==  = == = =  ",
+                            " =   = P= = =  ",
+                            " === = ^= ==   ",
+                            "wwwwwwwwwwwwwww",
+                            "wwwwwwwwwwwwwww",
+                            "wwwwwwwwwwwwwww",
+                            "wwwwwwwwwwwwwww",
+                            "wwwwwwwwwwwwwww",
+                            "wwwwwwwwwwwwwww"
+                        ]
+                    ];
+                    this.level=0; // keep track of which level to access
+                    this.levelSize=[0,0]; // level dimensions
+                    this.scrolling=new Scroll(0,0,width,height,0,0,this.levelSize[0],this.levelSize[1],8    ); // activate scrolling
+            };
+            /////////////////////////////////////////////////////////////////////
+
+            //Game setup + dictionary//////////////////////////////////////Andrew
+            Game.prototype.render=function(){
+                for(var col=0; col<this.levels[this.level].length; col++){
+                    for(var row=0; row<this.levels[this.level][col].length; row++){
+                        var entity=this.levels[this.level][col][row];
+                        if(entity==="P"){
+                            players.add(row*30,col*30,12,36,[key1,key2,key3]);
+                        }
+                        if(entity==="="){
+                            blocks.add(row*30,col*30,30,30,"platform");
+                        }
+                        if(entity==="w"){
+                            blocks.add(row*30,col*30,30,30,"wall");
+                        }
+                        if(entity==="O"){
+                            portals.add(row*30+15,col*30,60,60);
+                        }
+                        if(entity==="^"){
+                            spikes.add(row*30,col*30,30,30);
+                        }
+                    // apply a level width and height according to the level
+                    this.levelSize[0]=this.levels[this.level][col].length*30;
+                    this.levelSize[1]=this.levels[this.level].length*30;
+                    }
+                }
+            };
+            // apply object's methods to the draw loop
+            Game.prototype.apply=function(){
+                    var progress=this;
+                    this.scrolling.follow(players[0]);
+                    blocks.apply(this.scrolling);
+                    portals.apply(this.scrolling,players);
+                    spikes.apply(this.scrolling,players);
+                    players.apply(this.scrolling,blocks);
+                    for(var i=0; i<portals.length; i++){
+                        if(portals[i].complete){// to next level
+                            objects.remove();
+                            progress.level++;
+                            progress.render();
+                        }
+                    }
+                    for(var i=0; i<players.length; i++){
+                        if(players[i].y>this.levelSize[1]){
+                            players[i].dead=true;
+                        }
+                        if(players[i].dead){
+                            if(players[i].deathPause<30){
+                                players[i].deathPause++;
+                            }else{
+                                players[i].dead=false;
+                                objects.remove();
+                                progress.render();
+                            }
+                        }
+                    }
+                    noStroke();
+                    fill(screenOverlay[0],screenOverlay[1],screenOverlay[2],transparency);
+                    rect(0,0,width,height);
+            };
+            // create a game
+            var game=new Game();
+            game.render();
+            draw = function(){
+                background(0, 0, 0);
+                game.apply();
+            };
+            ///////////////////////////////////////////////////////////////////
+        }
+        if (typeof draw !== 'undefined') processing.draw = draw;
+    });
+  </script>
+</body>
+</html>
